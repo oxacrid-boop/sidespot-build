@@ -1,0 +1,78 @@
+name: Build APK from Zipped Project (with Rust NDK)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Extract project from zip
+        run: |
+          unzip -q sidespot.zip -d _extracted
+          DIR=$(find _extracted -maxdepth 1 -type d ! -name '_extracted' -print -quit)
+          if [ -n "$DIR" ]; then
+            echo "▶ Movendo conteúdo de $DIR para o diretório atual"
+            shopt -s dotglob nullglob
+            mv "$DIR"/* .
+            rm -rf _extracted
+          else
+            echo "▶ Movendo arquivos extraídos diretamente"
+            shopt -s dotglob nullglob
+            mv _extracted/* .
+            rm -rf _extracted
+          fi
+          echo "📁 Conteúdo do workspace:"
+          ls -la
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      # Instala o SDK do Android + NDK (versão que o projeto usa, geralmente a 25+)
+      - name: Setup Android SDK and NDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platforms;android-34 build-tools;34.0.0 ndk;26.1.10909125'   # ajuste o NDK conforme necessário
+
+      # Instala a toolchain Rust (estável)
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: 'aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android,i686-linux-android'
+
+      # Instala o cargo-ndk (plugin para integrar Rust com NDK)
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk
+
+      # Garante que o NDK está acessível (a action anterior já define ANDROID_NDK_HOME)
+      - name: Verify NDK installation
+        run: |
+          echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME"
+          ls "$ANDROID_NDK_HOME" || echo "⚠️ NDK path not set"
+
+      - name: Grant execute permission for Gradle wrapper
+        run: |
+          if [ -f gradlew ]; then
+            chmod +x gradlew
+          else
+            echo "❌ gradlew não encontrado!"
+            exit 1
+          fi
+
+      - name: Build debug APK
+        run: ./gradlew assembleDebug
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-debug
+          path: app/build/outputs/apk/debug/app-debug.apk
